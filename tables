@@ -1,0 +1,978 @@
+#!/usr/bin/bash
+shopt -s nocaseglob
+source ./validations
+RED='\033[0;31m'   # Red
+GREEN='\033[0;32m' # Green
+BLUE='\033[0;34m'  # Blue
+NC='\033[0m'       # No Color 
+table_operations() {
+PS3="Please select a valid table option: "
+echo -e "${GREEN}Current database: $DBNameLower${NC}"
+
+create_table() {
+    read -p "$(echo -e "${BLUE}Enter the table name you want to create: ${NC}")" table_name
+
+    table_name_lower="${table_name,,}"
+    validate_db_name "$table_name_lower"
+
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Invalid table name.${NC}"
+        return 1 
+    fi
+
+    # Check if table already exists
+    if [[ -f "$HOME/db/$DBNameLower/$table_name_lower" || -f "$HOME/db/$DBNameLower/.${table_name_lower}_metadata" ]]; then
+        echo -e "${RED}Error: Table '$table_name_lower' already exists.${NC}"
+        return 1
+    fi
+
+    names=() 
+    num='^(1000|[1-9][0-9]{0,2})$'  
+    while true; do
+        read -p "$(echo -e "${BLUE}Enter the number of columns: ${NC}")" column_number
+        if [[ $column_number =~ $num && $column_number -gt 0 ]]; then
+            # Primary key column
+            while true; do
+                read -p "$(echo -e "${BLUE}Enter the primary key column name: ${NC}")" column_name
+                colNameLower="${column_name,,}"
+                validate_db_name "$colNameLower"
+
+                if [ $? -eq 0 ]; then
+                    names[0]=$colNameLower
+                    break
+                else
+                    echo -e "${RED}Invalid column name. Please enter a valid name.${NC}"
+                fi
+            done
+
+            while true; do
+                read -p "$(echo -e "${BLUE}Enter the primary key Column Datatype (number || varchar): ${NC}")" column_datatype
+                column_datatype_lower="${column_datatype,,}"
+
+                if [[ "$column_datatype_lower" == "number" || "$column_datatype_lower" == "varchar" ]]; then
+                    break
+                else
+                    echo -e "${RED}Invalid Data Type.${NC}"
+                fi
+            done
+
+            # Add primary key to metadata
+            metadata="$colNameLower--$column_datatype_lower--1"
+            columns_metadata="$metadata"
+
+            # Remaining columns
+            for ((j = 1; j < column_number; j++)); do
+                while true; do
+                    read -p "$(echo -e "${BLUE}Enter the column name: ${NC}")" column_name
+                    colNameLower="${column_name,,}"
+                    validate_db_name "$colNameLower"
+
+                    if [ $? -eq 0 ]; then
+                        if [[ ! " ${names[@]} " =~ " $colNameLower " ]]; then
+                            names[j]=$colNameLower
+                            break
+                        else
+                            echo -e "${RED}Column name already exists. Please enter a unique name.${NC}"
+                        fi
+                    else
+                        echo -e "${RED}Invalid column name. Please enter a valid name.${NC}"
+                    fi
+                done
+
+                while true; do
+                    read -p "$(echo -e "${BLUE}Enter the Column Datatype (number || varchar || date || bool): ${NC}")" column_datatype
+                    column_datatype_lower="${column_datatype,,}"
+
+                    if [[ "$column_datatype_lower" == "number" || "$column_datatype_lower" == "varchar" || "$column_datatype_lower" == "date" || "$column_datatype_lower" == "bool" ]]; then
+                        break
+                    else
+                        echo -e "${RED}Invalid Data Type.${NC}"
+                    fi
+                done
+
+                # Add column to metadata
+                metadata="$colNameLower--$column_datatype_lower--0"
+                columns_metadata+=$'\n'"$metadata"
+            done
+
+            # Create files after successful validation
+            
+            echo -e "$columns_metadata" >> "$HOME/db/$DBNameLower/.${table_name_lower}_metadata"
+            touch "$HOME/db/$DBNameLower/$table_name_lower"  # Create table file
+            echo -e "${GREEN}Table '$table_name_lower' created successfully with metadata.${NC}"
+            break
+        else
+            echo -e "${RED}Enter a valid number of columns.${NC}"
+        fi
+    done
+}
+
+list_table() {
+    db_path="$HOME/db/$DBNameLower"
+
+    # Check if the database directory exists
+    if [[ ! -d "$db_path" ]]; then
+        echo -e "${RED}Error: Current database directory does not exist.${NC}"
+        return 1
+    fi
+
+    # Get the list of tables (excluding metadata files)
+    tables=($(ls "$db_path" 2>/dev/null | grep -v '^\.' | grep -v '_metadata$'))
+
+    # Check if there are any tables
+    if [[ ${#tables[@]} -eq 0 ]]; then
+        echo -e "${BLUE}This database is empty.${NC}"
+    else
+        echo -e "${GREEN}Tables in database '$DBNameLower':${NC}"
+        for table in "${tables[@]}"; do
+            echo "- $table"
+            echo -e "${GREEN}Tables in database '$DBNameLower' are listed successfully.${NC}"
+        done
+    fi
+}
+
+drop_table() {
+    read -p "$(echo -e "${BLUE}Enter the name of the table you want to drop: ${NC}")" table_name
+    table_name_lower="${table_name,,}"  # Convert table name to lowercase
+
+    # Validate the table name
+    validate_db_name "$table_name_lower"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Invalid table name.${NC}"
+        return 1
+    fi
+
+    # Check if the table exists
+    data_file="$HOME/db/$DBNameLower/$table_name_lower"
+    metadata_file="$HOME/db/$DBNameLower/.${table_name_lower}_metadata"
+
+    if [[ -f "$data_file" && -f "$metadata_file" ]]; then
+        # Remove data and metadata files
+        rm "$data_file"
+        rm "$metadata_file"
+        echo -e "${GREEN}Table '$table_name_lower' and its metadata has been dropped successfully.${NC}"
+    else
+        echo -e "${RED}Error: Table '$table_name_lower' does not exist.${NC}"
+    fi
+}
+
+
+
+insert_record() {
+while true; do
+    read -p "$(echo -e "${BLUE}Enter the table name you want to insert into: ${NC}")" table_name
+
+    table_name_lower="${table_name,,}"
+    validate_db_name "$table_name_lower"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Invalid table name.${NC}"
+        return 1
+    fi 
+# check if the table name exists
+    if [[ ! -f "$HOME/db/$DBNameLower/$table_name_lower" ]]; then
+        echo -e "${RED}Table '$table_name_lower' does not exist.${NC}"
+        return 1
+    fi
+#check if the metadata table exists
+    metadata_file="$HOME/db/$DBNameLower/.${table_name_lower}_metadata"
+    if [[ ! -f "$metadata_file" ]]; then
+        echo -e "${RED}Metadata file for '$table_name_lower' does not exist.${NC}"
+        return 1
+    fi
+
+# Extract column names, data types, and if it is primary key or not
+num_rows=$(wc -l < "$metadata_file")
+colNames=($(awk 'BEGIN{FS="--"}{if(NR>0)print $1;}' "$metadata_file"))
+col_Type=($(awk 'BEGIN{FS="--"}{if(NR>0)print $2;}' "$metadata_file"))
+Is_PK=($(awk 'BEGIN{FS="--"}{if(NR>0)print $3;}' "$metadata_file"))
+
+
+primary_key=""
+# Process each column and check for primary key
+for i in "${!colNames[@]}"; do
+    col_name="${colNames[$i]}"
+    col_type="${col_Type[$i]}"
+    is_pk="${Is_PK[$i]}"
+
+    # Check if it's a primary key
+    if [[ "$is_pk" == "1" ]]; then
+        primary_key="$col_name"
+    fi
+    echo "Column Name: $col_name, Data Type: $col_type, Is this the Primary Key(1 means yes/0 means no)?: $is_pk"
+done
+
+# After the loop, print the primary key
+echo -e "${GREEN}Primary Key is: $primary_key ${NC}"
+
+
+# Now, handle data input and validation
+i=0
+row=()
+max_size=255 
+while (( i < ${#colNames[@]} )); do
+	col_name="${colNames[$i]}"
+        col_type="${col_Type[$i]}"
+        is_pk="${Is_PK[$i]}"
+        
+        # Prompt user to enter data
+        while true; do
+            read -p "$(echo -e "${BLUE}Enter ${col_name}: ${NC}")" input
+            if [ -n "$input" ]; then
+                if [[ "$col_type" == "number" ]]; then
+                    if [[ "$input" =~ ^[0-9]+$ ]]; then  # Numeric validation
+                    if (( "$input" >= -2147483648 && "$input" <= 2147483647 )); then  #ensuring size is max 32 bit
+                        if [ "$is_pk" == "1" ]; then  # Check for unique primary key
+                            value=$(awk -v key="$input" -F"[ ]" '{ if ($1 == key) print $0; }' "$HOME/db/$DBNameLower/$table_name_lower")
+                            
+                            if [ -n "$value" ]; then
+                              echo -e "${RED}Primary Key '$input' must be unique. Please Enter a unique value.${NC}"
+                            else
+                                row[i]=$input
+                                break
+                            fi
+                        else
+                            row[i]=$input
+                            break
+                        fi
+                        else
+                echo -e "${RED}Invalid number. Please enter a number between -2,147,483,648 and 2,147,483,647.${NC}"
+            fi
+                    else
+                        echo -e "${RED}Invalid Numeric Data Type. Please enter a valid number.${NC}"
+                    fi
+                elif [[ "$col_type" == "varchar" ]]; then  # String validation
+                    if [ ${#input} -le $max_size ]; then
+                    if [[ "$input" =~ ^\'(.+)\'$ ]]; then # varchar validation
+                        if [ "$is_pk" == "1" ]; then  # Check for unique primary key
+                            value=$(awk -v key="$input" -F"[ ]" '{ if ($1 == key) print $0; }' "$HOME/db/$DBNameLower/$table_name_lower")
+                            if [ -n "$value" ]; then
+                               echo -e "${RED}Primary Key '$input' must be unique. Enter a unique string.${NC}"
+                            else
+                                row[i]=$input
+                                break
+                            fi
+                        else
+                            row[i]=$input
+                            break
+                        fi
+                    else
+                     echo -e "${RED}Invalid varchar Data Type. Please enter the string between ''.${NC}"
+                    fi
+                    else
+                            echo -e "${RED}Input exceeds the max allowed length of $max_size characters.${NC}"
+                        fi
+                    elif [[ "$col_type" == "date" ]]; then
+                    if [[ "$input" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                    valid_date=$(date -d "$input" +"%Y-%m-%d" 2>/dev/null)
+                    if [[ "$valid_date" == "$input" && "$input" > "1000-01-01" && "$input" < "9999-12-31" ]]; then
+                    row[i]="$input"
+                    break
+                    else
+                    echo -e "${RED}Date '$input' is out of the valid range. Please enter a date between '1000-01-01' and '9999-12-31'.${NC}"
+                     fi
+                    else
+                    echo -e "${RED}Invalid date format for column '$col_name'. Please use YYYY-MM-DD.${NC}"
+                	fi
+                elif [[ "$col_type" == "bool" ]]; then
+                if [[ "${input,,}" == "true" || "${input,,}" == "false" ]]; then
+                    row[i]="$input"
+                    break
+                else
+                    echo -e "${RED}Invalid value for column '$col_name'. Please enter 'true' or 'false'.${NC}"
+                fi
+                                        
+                else
+                  echo -e "${RED}Unknown column type for validation.${NC}"
+
+                    break
+                fi
+            else
+               echo -e "${RED}Input cannot be empty. Please enter a value.${NC}"
+
+            fi
+        done
+        ((i++))
+    done
+
+    # After all inputs are validated, append the row to the table file
+    echo "${row[*]}" >> "$HOME/db/$DBNameLower/$table_name_lower"
+   
+    # Ask if the user wants to add another row
+   read -p "$(echo -e "${BLUE}Do you want to enter a new row (press any key to continue, or N to return back to the sub-menu)? ${NC}")" answer
+	
+    if [[ "$answer" == "n" ]] || [[ "$answer" == "N" ]]; then
+    	echo -e "${GREEN}Returning to the sub-menu...${NC}"
+        return 1 # This should presumably take the user back to the previous sub menu 
+    fi
+    	echo -e "${GREEN}Row added successfully!${NC}"
+done 
+}
+
+select_table() {
+    while true; do
+        read -p "$(echo -e "${BLUE}Enter the table name to select from: ${NC}")" table_name
+        table_name_lower="${table_name,,}"
+        validate_db_name "$table_name_lower"
+
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Invalid table name.${NC}"
+            return 1
+        fi
+
+        # Check if table and metadata exist
+        metadata_file="$HOME/db/$DBNameLower/.${table_name_lower}_metadata"
+        table_file="$HOME/db/$DBNameLower/$table_name_lower"
+
+        if [[ ! -f "$metadata_file" || ! -f "$table_file" ]]; then
+            echo -e "${RED}Error: Table '$table_name_lower' does not exist.${NC}"
+            return 1
+        fi
+
+        # Read column names from metadata
+        column_names=($(awk -F '--' '{print $1}' "$metadata_file"))
+        column_names_lower=("${column_names[@],,}") # Lowercase array for comparison
+        echo -e "${GREEN}Available columns: ${column_names[*]}${NC}"
+
+        # Submenu for selection options
+        
+        select option in "Select all columns" "Select specific columns" "Select with condition" "Exit"; do
+            case $option in
+                "Select all columns")
+                    echo -e "${GREEN}Fetching all columns...${NC}"
+                    more "$table_file"  # Display all rows
+                    ;;
+                 "Select specific columns")
+                    read -p "$(echo -e "${BLUE}Enter the column names (comma-separated): ${NC}")" column_list
+                    IFS=',' read -r -a selected_columns <<< "$column_list"
+
+                    # Validate columns (case-insensitive check)
+                    invalid_columns=()
+                    valid_columns=()
+                    col_indexes=()  # To store the column indices
+                    for col in "${selected_columns[@]}"; do
+                        col_lower="${col,,}"
+                        if [[ " ${column_names_lower[*]} " =~ " $col_lower " ]]; then
+                            valid_columns+=("$col_lower")
+                            # Find the index of the valid column
+                            col_index=$(echo "${column_names_lower[@]}" | tr ' ' '\n' | grep -n -i "^$col_lower$" | cut -d: -f1)
+                            col_indexes+=($col_index)
+                        else
+                            invalid_columns+=("$col")
+                        fi
+                    done
+
+                    if [[ ${#invalid_columns[@]} -gt 0 ]]; then
+                        echo -e "${RED}Invalid columns: ${invalid_columns[*]}.${NC}"
+                        echo "From the select sub-menu....."
+                        continue
+                    else
+                        echo -e "${GREEN}Fetching selected columns: ${valid_columns[*]}${NC}"
+                        # Adjust the AWK script to print selected columns based on their indexes
+                        awk -F ' ' '
+                            BEGIN {
+                                # Store column indexes in an array
+                                split("'"${col_indexes[*]}"'", indexes, " ");
+                            }
+                            {
+                                # For each line, print the columns based on indexes
+                                for (i in indexes) {
+                                    printf "%s ", $indexes[i];
+                                }
+                                print "";  # Newline after each row
+                            }' "$table_file"
+                    fi
+                    ;;
+
+                "Select with condition")
+		    read -p "$(echo -e "${BLUE}Enter condition (e.g., id=9, salary>5000): ${NC}")" condition
+			echo -e "${GREEN}Fetching rows where '$condition'...${NC}"
+
+			# Extract the column, operator, and value from the condition
+			column=$(echo "$condition" | grep -o '^[^=<>]*' | tr '[:upper:]' '[:lower:]')  # Column name (lowercased)
+			operator=$(echo "$condition" | grep -o '>=\|<=\|[=<>]')  # Operator
+			value=$(echo "$condition" | sed -E "s/.*[=<>]+//" | sed "s/^[[:space:]]//;s/[[:space:]]*$//")  # Value
+
+			
+			# Validate the column name
+			if [[ ! " ${column_names_lower[*]} " =~ " $column " ]]; then
+			    echo -e "${RED}Invalid column '$column'.${NC}"
+			    echo "From the select sub-menu....."
+			    continue
+			else
+		
+			# Use awk to filter rows based on the condition
+			awk -v col="$column" -v op="$operator" -v raw_val="$value" -v col_names="${column_names_lower[*]}" '
+			    BEGIN {
+				# Determine if the value is numeric
+				is_numeric = raw_val ~ /^[0-9.]+$/;
+
+				# Prepare the value for comparison
+				val = raw_val;
+
+				# Split column names into an array
+				split(col_names, col_arr, " ");
+				col_idx = -1;
+				for (i = 1; i <= length(col_arr); i++) {
+				    if (tolower(col_arr[i]) == col) {
+					col_idx = i;
+					break;
+				    }
+				}
+			    }
+			    # If the column index is valid, check the condition
+			    col_idx > 0 {
+				if (op == "=") {
+				    # Handle string comparisons (remove quotes for raw_val)
+				    if (!is_numeric && $col_idx == raw_val) print $0;
+				    # Handle numeric comparisons
+				    else if (is_numeric && $col_idx == val) print $0;
+				} else if (op == ">" && is_numeric) {
+				    if ($col_idx > raw_val) print $0;
+				} else if (op == "<" && is_numeric) {
+				    if ($col_idx < raw_val) print $0;
+				}
+			    }
+			' "$table_file"
+
+
+			fi
+		    ;;
+
+                "Exit")
+                    echo -e "${GREEN}Exiting selection sub-menu.${NC}"
+                    return 1 # Exit from the select_table function and go back to the main menu
+                    ;;
+                *)
+                    echo -e "${RED}Invalid option. Please select a valid option.${NC}"
+                    ;;
+            esac
+        done
+    done
+     
+}
+update_table() {
+    while true; do
+        read -p "$(echo -e "${BLUE}Enter the table name to update: ${NC}")" table_name
+        table_name_lower="${table_name,,}"
+        validate_db_name "$table_name_lower"
+
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Invalid table name.${NC}"
+            return 1
+        fi
+
+        # Check if table and metadata exist
+        if [[ ! -f "$HOME/db/$DBNameLower/$table_name_lower" ]]; then
+            echo -e "${RED}Table '$table_name_lower' does not exist.${NC}"
+            return 1
+        fi
+
+        metadata_file="$HOME/db/$DBNameLower/.${table_name_lower}_metadata"
+        if [[ ! -f "$metadata_file" ]]; then
+            echo -e "${RED}Metadata file for '$table_name_lower' does not exist.${NC}"
+            return 1
+        fi
+
+        # Extract column names, data types, and if it is primary key or not
+        colNames=($(awk 'BEGIN{FS="--"}{if(NR>0)print $1;}' "$metadata_file"))
+        col_Type=($(awk 'BEGIN{FS="--"}{if(NR>0)print $2;}' "$metadata_file"))
+        Is_PK=($(awk 'BEGIN{FS="--"}{if(NR>0)print $3;}' "$metadata_file")) 
+     
+        
+	primary_key=""
+	# Process each column and check for primary key
+	for i in "${!colNames[@]}"; do
+	    col_name="${colNames[$i]}"
+	    col_type="${col_Type[$i]}"
+	    is_pk="${Is_PK[$i]}"
+
+	    # Check if it's a primary key
+	    if [[ "$is_pk" == "1" ]]; then
+		primary_key="$col_name"
+	    fi
+        	done                
+        # Print column names for reference
+        echo -e "${GREEN}Available columns: ${colNames[*]}${NC}"
+
+        # Submenu for update options
+        select option in "Update all rows" "Update with condition" "Exit"; do
+            case $option in
+                "Update all rows")
+                    echo -e "${GREEN}Updating all rows...${NC}"
+                    read -p "$(echo -e "${BLUE}Enter the column name to update: ${NC}")" column_name
+                    
+                    if [[ "$column_name" == "$primary_key" ]]; then
+		 echo -e "${RED}Error: You cannot update the primary key column '$primary_key'.${NC}"
+		 echo "From update sub-menu......"
+		    continue
+		  fi
+		 
+                # Validate the column name (case-insensitive check)
+                column_name_lower="${column_name,,}"               
+                validate_db_name "$column_name_lower"
+
+		if [ $? -ne 0 ]; then
+		    echo -e "${RED}Invalid column name. Please enter a valid column name.${NC}"
+		    echo "From update sub-menu......"
+		    continue
+		elif [[ ! " ${colNames[@]} " =~ " ${column_name_lower} " ]]; then
+		    echo -e "${RED}Column '$column_name_lower' does not exist.${NC}"
+		    echo "From update sub-menu......"
+		    continue
+		fi  
+		read -p "$(echo -e "${BLUE}Enter the new value for column '$column_name': ${NC}")" new_value
+		
+                    col_idx=$(echo "${colNames[@]}" | tr ' ' '\n' | grep -n -i "^$column_name_lower$" | cut -d: -f1)
+
+                    col_idx=$((col_idx-1))  # Convert to 0-based index
+
+                    # Validate the new value based on the column type
+                    col_type="${col_Type[$col_idx]}"
+                    
+                    
+                    validate_column_value "$col_type" "$new_value" "$column_name"
+                       if [ $? -ne 0 ]; then
+			echo -e "${RED}Invalid Entry.${NC}"
+			echo "From update sub-menu......"
+			continue
+		    fi
+                   
+		    col_idx=$((col_idx+1))
+                    # Use awk to update the column for all rows
+                    awk -v col_idx="$col_idx" -v new_val="$new_value" '
+                        {
+                            $col_idx = new_val;  # Update the column value
+                            print $0;  # Print the updated row
+                        }' "$HOME/db/$DBNameLower/$table_name_lower" > "$HOME/db/$DBNameLower/$table_name_lower.tmp" && mv "$HOME/db/$DBNameLower/$table_name_lower.tmp" "$HOME/db/$DBNameLower/$table_name_lower"
+                    echo -e "${GREEN}Table updated successfully.${NC}"
+                    ;;
+		
+		"Update with condition")
+    echo -e "${GREEN}Updating rows based on a condition...${NC}"
+    read -p "$(echo -e "${BLUE}Enter condition (e.g., id=9, salary>5000): ${NC}")" condition
+    echo -e "${GREEN}Updating rows where '$condition'...${NC}"
+
+    # Extract the column, operator, and value from the condition
+    column=$(echo "$condition" | grep -o '^[^=<>]*' | tr '[:upper:]' '[:lower:]')  # Column name (lowercased)
+    operator=$(echo "$condition" | grep -o '[=<>]')  # Operator                                      
+value=$(echo "$condition" | sed -E "s/^[^=<>]*[=<>]//;s/^[[:space:]]+//;s/[[:space:]]+$//")
+
+
+                # Validate the column name (case-insensitive check)
+                column_name_lower="${column,,}"               
+                validate_db_name "$column_name_lower"
+
+		if [ $? -ne 0 ]; then
+		echo -e "${RED}Invalid column name. Please enter a valid column name.${NC}"
+		echo "From update sub-menu......"
+		    continue
+			fi
+			
+                 if [[ ! " ${colNames[@]} " =~ " ${column_name_lower} " ]]; then
+		 echo -e "${RED}Column '$column_name_lower' does not exist.${NC}"
+		 echo "From update sub-menu......"
+		    continue
+			fi
+			
+		#validate the entered value		
+		col_idx=$(echo "${colNames[@]}" | tr ' ' '\n' | grep -n -i "^$column$" | cut -d: -f1)
+		    if [ -z "$col_idx" ]; then
+			echo -e "${RED}Invalid column '$column'.${NC}"
+			echo "From update sub-menu......"
+			continue
+		    fi
+		col_idx=$((col_idx-1))
+		col_type="${col_Type[$col_idx]}"
+		validate_column_value "$col_type" "$value" "$column"
+    
+     if [ $? -ne 0 ]; then
+	echo -e "${RED}Invalid Entry.${NC}"
+	echo "From update sub-menu......"
+	continue
+	fi
+
+# Validate the u_col (case-insensitive check)
+read -p "Please Enter the column name you want to update: " u_col
+
+                column_name_lower="${u_col,,}"               
+                validate_db_name "$column_name_lower"
+
+		if [ $? -ne 0 ]; then
+		echo -e "${RED}Invalid column name. Please enter a valid column name.${NC}"
+		echo "From update sub-menu......"
+		    continue
+			fi
+			
+                 if [[ ! " ${colNames[@]} " =~ " ${column_name_lower} " ]]; then
+		 echo -e "${RED}Column '$column_name_lower' does not exist.${NC}"
+		 echo "From update sub-menu......"
+		    continue
+			fi
+    
+    col_idx=$(echo "${colNames[@]}" | tr ' ' '\n' | grep -n -i "^$u_col$" | cut -d: -f1)
+    if [ -z "$col_idx" ]; then
+        echo -e "${RED}Invalid column '$u_col'.${NC}"
+        echo "From update sub-menu......"
+        continue
+    fi
+    col_idx=$((col_idx-1))  # Convert to 0-based index
+  
+    # Validate the new value based on the column type    
+    col_type="${col_Type[$col_idx]}"
+    read -p "$(echo -e "${BLUE}Enter the new value for column '$u_col': ${NC}")" new_value
+
+    # If it's a primary key, check that the value is unique    
+    if [[ "$u_col" == "$primary_key" ]]; then
+        if [[ -z "$new_value" ]]; then
+            echo -e "${RED}Primary key cant be null.${NC}"
+            echo "From update sub-menu......"
+            continue            
+        else
+        # Check if the value already exists in the table for the primary key column
+        if grep -q "$new_value" "$HOME/db/$DBNameLower/$table_name_lower"; then
+            echo -e "${RED}The value '$new_value' already exists in the '$u_col' column (primary key must be unique).${NC}"
+            echo "From update sub-menu......"
+            continue
+        fi
+       fi
+    fi
+   
+    validate_column_value "$col_type" "$new_value" "$u_col"  
+     if [ $? -ne 0 ]; then
+	echo -e "${RED}Invalid Entry.${NC}"
+	echo "From update sub-menu......"
+	continue
+	fi
+
+    # Map column name to its index for condition processing
+    target_col_idx=-1
+    for i in "${!colNames[@]}"; do
+        if [[ "${colNames[$i],,}" == "$column" ]]; then
+            target_col_idx=$i
+            break
+        fi
+    done
+
+    if [[ $target_col_idx -eq -1 ]]; then
+        echo -e "${RED}Column '$column' not found.${NC}"
+        echo "From update sub-menu......"
+        continue
+    fi
+
+col_idx=$((col_idx+1))
+
+target_col_idx=$((target_col_idx+1))
+    # Use awk to update rows based on condition
+    awk -v col_idx="$col_idx" -v new_val="$new_value" -v operator="$operator" -v val="$value" -v target_col_idx="$target_col_idx" '
+        BEGIN {
+            
+        }
+        {
+            # Get the value from the column specified in the condition
+            column_value = $target_col_idx  # Target column for condition (e.g., id)
+            update_value = $col_idx  # Column to be updated (e.g., name)
+
+            # Handle comparison based on operator
+            if (operator == "=") {
+                if (column_value == val) {
+                    $col_idx = new_val  # Update the column value
+                }
+            } else if (operator == ">") {
+                if (column_value > val) {
+                    $col_idx = new_val  # Update the column value
+                }
+            } else if (operator == "<") {
+                if (column_value < val) {
+                    $col_idx = new_val  # Update the column value
+                }
+            }
+            print $0  # Print the updated row
+        }' "$HOME/db/$DBNameLower/$table_name_lower" > "$HOME/db/$DBNameLower/$table_name_lower.tmp" && mv "$HOME/db/$DBNameLower/$table_name_lower.tmp" "$HOME/db/$DBNameLower/$table_name_lower"
+
+    echo -e "${GREEN}Table updated successfully based on the condition.${NC}"
+    ;;
+                "Exit")
+                    echo -e "${GREEN}Exiting update sub-menu.${NC}"
+                    return 1 # Exit from the update_table function and go back to the main menu
+                    ;;
+                *)
+                    echo -e "${RED}Invalid option. Please select a valid option from the update sub-menu.${NC}"
+                    continue
+                    ;;
+            esac
+        done
+    done
+}
+
+# Function to validate column value based on its type (like number, varchar, date, etc.)
+validate_column_value() {
+    col_type="$1"
+    input="$2"
+    col_name="$3"
+    max_size=255  # Default max size for varchar
+            
+    case "$col_type" in
+        "number")
+            # Numeric validation
+            if [[ ! "$input" =~ ^[0-9]+$ ]]; then
+                echo -e "${RED}Invalid Numeric Data Type. Please enter a valid number for '$col_name'.${NC}"
+                return 1
+            fi
+
+            # Ensure size is within the 32-bit integer range
+            if (( "$input" < -2147483648 || "$input" > 2147483647 )); then
+                echo -e "${RED}Invalid number. Please enter a number between -2,147,483,648 and 2,147,483,647 for '$col_name'.${NC}"
+                return 1
+            fi
+            ;;
+
+        "varchar")
+            # Ensure string length is within the maximum allowed size
+            if [[ ${#input} -gt $max_size ]]; then
+                echo -e "${RED}Input exceeds the maximum allowed length of $max_size characters for '$col_name'.${NC}"
+                return 1
+            fi
+
+            # Ensure input is surrounded by single quotes
+            if [[ ! "$input" =~ ^\'(.+)\'$ ]]; then            
+	     echo -e "${RED}Invalid varchar Data Type. Please enter the string between single quotes (') for '$col_name'.${NC}"
+                return 1
+            fi
+
+            #  remove the surrounding single quotes (if needed for further processing)
+            input="${input//\'/}"
+            ;;
+
+        "date")
+            # Validate date format (YYYY-MM-DD)
+            if [[ ! "$input" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                echo -e "${RED}Invalid date format for column '$col_name'. Please use 'YYYY-MM-DD'.${NC}"
+                return 1
+            fi
+
+            # Check if the date is valid and within the range
+            valid_date=$(date -d "$input" +"%Y-%m-%d" 2>/dev/null)
+            if [[ "$valid_date" != "$input" || "$input" < "1000-01-01" || "$input" > "9999-12-31" ]]; then
+                echo -e "${RED}Date '$input' is out of the valid range. Please enter a date between '1000-01-01' and '9999-12-31'.${NC}"
+                return 1
+            fi
+            ;;
+
+        "bool")
+            # Validate boolean values (true/false)
+            if [[ "${input,,}" != "true" && "${input,,}" != "false" ]]; then
+                echo -e "${RED}Invalid value for column '$col_name'. Please enter 'true' or 'false'.${NC}"
+                return 1
+            fi
+            ;;
+
+        *)
+            # If the column type is unknown
+            echo -e "${RED}Unknown column type '$col_type' for validation.${NC}"
+            return 1
+            ;;
+    esac
+
+    # If validation passes
+    echo -e "${GREEN}Valid input for '$col_name': $input${NC}"
+    return 0  # Successful validation
+}
+
+delete_records() {
+    while true; do
+        # Prompt the user to enter the table name
+        read -p "$(echo -e "${BLUE}Enter the table name to delete records from: ${NC}")" table_name
+        table_name_lower="${table_name,,}"
+        validate_db_name "$table_name_lower"
+
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Invalid table name.${NC}"
+            return 1
+        fi
+
+        # Check if table and metadata exist
+        metadata_file="$HOME/db/$DBNameLower/.${table_name_lower}_metadata"
+        table_file="$HOME/db/$DBNameLower/$table_name_lower"
+
+        if [[ ! -f "$metadata_file" || ! -f "$table_file" ]]; then
+            echo -e "${RED}Error: Table '$table_name_lower' does not exist.${NC}"
+            return 1
+        fi
+
+        echo -e "${GREEN}Selected table: $table_name_lower${NC}"
+        # Prompt the user for a condition or delete all
+        read -p "$(echo -e "${BLUE}Do you want to delete records with a condition? (y/n) or press any key to exit delete operation: ${NC}")" delete_condition
+
+        if [[ "$delete_condition" == "n" || "$delete_condition" == "N" ]]; then
+            # Delete all records by truncating the table
+            > "$table_file"
+            echo -e "${GREEN}All records from '$table_name_lower' have been deleted.${NC}"
+        elif [[ "$delete_condition" == "y" || "$delete_condition" == "Y" ]]; then
+            read -p "$(echo -e "${BLUE}Enter condition (e.g., id=9, salary>5000): ${NC}")" condition
+            echo -e "${GREEN}Deleting rows where '$condition'...${NC}"
+
+            # Extract the column, operator, and value from the condition
+            column=$(echo "$condition" | grep -o '^[^=<>]*' | tr '[:upper:]' '[:lower:]')  # Column name (lowercased)
+            operator=$(echo "$condition" | grep -o '>=\|<=\|[=<>]')  # Operator
+            value=$(echo "$condition" | sed -E "s/.*[=<>]+//" | sed "s/^[[:space:]]//;s/[[:space:]]*$//")  # Value
+
+            # Read column names and types from metadata
+            column_names=($(awk -F '--' '{print $1}' "$metadata_file"))
+            column_types=($(awk -F '--' '{print $2}' "$metadata_file"))
+            column_names_lower=("${column_names[@],,}") # Lowercase array for comparison
+
+            # Validate the column name
+            if [[ ! " ${column_names_lower[*]} " =~ " $column " ]]; then
+                echo -e "${RED}Invalid column '$column'.${NC}"
+                continue
+            else
+                # Find the index of the column in the array
+                col_idx=-1
+                for i in "${!column_names[@]}"; do
+                    if [[ "${column_names_lower[$i]}" == "$column" ]]; then
+                        col_idx=$i
+                        break
+                    fi
+                done
+
+                # Get the column type
+                col_type="${column_types[$col_idx]}"
+
+                # Validate the value using validate_column_value function
+                validate_column_value "$col_type" "$value" "$column"
+                if [ $? -ne 0 ]; then
+                    echo -e "${RED}Condition validation failed.${NC}"
+                    continue
+                fi
+
+                # Count matching rows before deletion
+                matching_rows=$(awk -v col="$column" -v op="$operator" -v raw_val="$value" -v col_names="${column_names_lower[*]}" '
+                    BEGIN {
+                        is_numeric = raw_val ~ /^[0-9.]+$/;
+                        val = raw_val;
+                        split(col_names, col_arr, " ");
+                        col_idx = -1;
+                        for (i = 1; i <= length(col_arr); i++) {
+                            if (tolower(col_arr[i]) == col) {
+                                col_idx = i;
+                                break;
+                            }
+                        }
+                    }
+                    col_idx > 0 {
+                        if ((op == "=" && (($col_idx == raw_val) || ($col_idx == val))) ||
+                            (op == ">" && is_numeric && $col_idx > raw_val) ||
+                            (op == "<" && is_numeric && $col_idx < raw_val)) {
+                            print $0;
+                        }
+                    }
+                ' "$table_file" | wc -l)
+
+                if (( matching_rows == 0 )); then
+                    echo -e "${RED}Error: No rows match the condition '$condition'.${NC}"
+                    continue
+                else
+                    # Use awk to delete matching rows
+                    awk -v col="$column" -v op="$operator" -v raw_val="$value" -v col_names="${column_names_lower[*]}" '
+                        BEGIN {
+                            is_numeric = raw_val ~ /^[0-9.]+$/;
+                            val = raw_val;
+                            split(col_names, col_arr, " ");
+                            col_idx = -1;
+                            for (i = 1; i <= length(col_arr); i++) {
+                                if (tolower(col_arr[i]) == col) {
+                                    col_idx = i;
+                                    break;
+                                }
+                            }
+                        }
+                        col_idx > 0 {
+                            if (!(op == "=" && (($col_idx == raw_val) || ($col_idx == val))) &&
+                                !(op == ">" && is_numeric && $col_idx > raw_val) &&
+                                !(op == "<" && is_numeric && $col_idx < raw_val)) {
+                                print $0;
+                            }
+                        }
+                    ' "$table_file" > "${table_file}_temp"
+                    
+                    mv "${table_file}_temp" "$table_file"
+                    echo -e "${GREEN}Rows matching condition '$condition' have been deleted from '$table_name_lower'.${NC}"
+                fi
+            fi
+        else
+            echo -e "${GREEN}Exiting delete operation.......${NC}"
+            return 1
+            
+        fi
+
+        # Exit after successful operation
+        echo -e "${GREEN}Exiting delete operation.....${NC}"
+        echo "From table operations sub-menu......"
+        break
+    done
+}
+
+
+
+
+while true; do
+    select option in "create table" "list table" "drop table" "Insert into table" "select from table" "delete from table" "update table" "exit"
+    do
+        if [[ -z "$option" ]]; then
+            echo -e "${RED}Invalid input. Please select a valid option.${NC}"
+        else
+            case $option in
+                "create table")
+                    create_table
+                    if [ $? -ne 0 ]; then
+			   break 
+	            fi
+                    ;;
+                "list table")
+                   list_table
+                   if [ $? -ne 0 ]; then
+			   break 
+	           fi
+                    ;;  
+                "drop table")
+                    drop_table
+                    if [ $? -ne 0 ]; then
+			   break 
+	            fi
+                    ;;  
+                "Insert into table")
+                    insert_record
+                    if [ $? -ne 0 ]; then
+			   break 
+	            fi
+                    ;;  
+                "select from table")
+                    select_table
+                    if [ $? -ne 0 ]; then
+			   break 
+	            fi
+                    ;;  
+                "delete from table")
+                    delete_records
+                    if [ $? -ne 0 ]; then
+			   break 
+	            fi
+                    ;;  
+                "update table")
+                    update_table
+                    if [ $? -ne 0 ]; then
+			   break 
+	            fi
+                    ;;  
+                "exit")
+                    echo -e "${GREEN}Exiting the table operations menu.....${NC}"
+                    break 2  # Exit the entire loop and script
+                    ;;  
+                *)
+                    echo -e "${RED}Invalid option. Please select a valid option.${NC}"
+                    ;;  
+            esac
+        fi
+    done
+done
+}

@@ -1,0 +1,52 @@
+#!/usr/bin/bash
+RED='\033[0;31m'   # Red
+NC='\033[0m'       # No Color
+validate_db_name(){
+    local db_name="$1"
+    local errors=""
+    local db_name_lower="${db_name,,}"
+    local max_length=64
+    
+    
+    local keywords_file="$HOME/bash_project/reserved_keywords"
+     
+    
+    # checks if the name is empty
+    if [[ -z "$db_name_lower" ]]; then
+        errors+="Error: Name cannot be empty.\n"
+    fi
+
+    # checks if name includes spaces
+    if [[ "$db_name_lower" =~ [[:space:]] ]]; then 
+        errors+="Error: Name cannot contain spaces.\n"
+    fi
+
+    # checks if name does not include special characters or begin with a number
+    if [[ ! "$db_name_lower" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+        errors+="Error: Name must start with letter or underscore (_) and cannot include special characters.\n"
+    fi
+
+    # Check if the database name exceeds the max length
+    if [[ ${#db_name_lower} -gt $max_length ]]; then
+        errors+="Error: Name exceeds the maximum allowed length of $max_length characters.\n"
+    fi
+
+    # checks if name does not match reserved keyword (case insensitive)
+    if [[ -f "$keywords_file" ]]; then
+        if awk -v name="$db_name_lower" 'BEGIN {IGNORECASE=1} {if (tolower($0) == name) exit 1}' "$keywords_file"; then
+            :  # Do nothing, no match found
+        else
+            errors+="Error: '$db_name' is a reserved keyword.\n"
+        fi
+    else
+        errors+="Warning: Keywords file '$keywords_file' not found. Skipping reserved keyword validation.\n"
+    fi
+
+    if [[ -n "$errors" ]]; then
+        echo -e "${RED}$errors ${NC}"
+        return 1
+    fi
+
+    return 0
+}
+

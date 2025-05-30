@@ -1,0 +1,117 @@
+#!/usr/bin/bash
+source ./validations
+source ./tables
+
+shopt -s nocaseglob
+RED='\033[0;31m'   # Red
+GREEN='\033[0;32m' # Green
+BLUE='\033[0;34m'  # Blue
+NC='\033[0m'       # No Color
+# Initialize the PS3 prompt to your desired custom message
+PS3="Please select a valid database operation: "
+
+if [ -e ~/db ]
+then
+    cd ~/db
+    echo -e "${GREEN}Database Management System is ready${NC}"
+else
+    mkdir ~/db
+    cd ~/db
+    echo -e "${GREEN}Database Management System is ready${NC}"
+fi
+
+# The select loop with a custom prompt and validation to ensure valid input
+while true; do
+    select option in "create database" "list databases" "connect to databases" "drop database" "exit"
+    do
+        if [[ -z "$option" ]]; then
+            echo -e "${RED}Invalid input. Please select a valid option.${NC}"
+            break
+        fi
+
+        case $option in
+            "create database")
+                read -p "$(echo -e "${BLUE}Please enter your database name: ${NC}")" DBName
+
+                DBNameLower="${DBName,,}"
+                validate_db_name "$DBNameLower"
+                
+                # Check if the function returned an error (non-zero status)
+                if [ $? -eq 0 ]; then
+                    # Check if database name already exists 
+                    if [[ -d "$HOME/db/$DBNameLower" ]]; then
+                        echo -e "${RED}Error: database '$DBName' already exists.${NC}"
+                    else
+                        mkdir -p "$HOME/db/$DBNameLower"  # Create the database directory if validation is successful
+                        echo -e "${GREEN}Database '$DBNameLower' has been successfully created.${NC}"
+                    fi
+                else
+                    echo -e "${RED}Failed to create database due to validation errors.${NC}"
+                fi
+                break
+                ;;
+            
+            "list databases") 
+                if [[ -z "$(ls -F ~/db | grep /)" ]]; then
+                    echo -e "${RED}The database 'db' is empty.${NC}"
+                else
+                    echo -e "${GREEN}The database list: ${NC}"
+                    ls -F ~/db | grep / | sed 's|/$||'
+                    echo -e "${GREEN}The database is listed successfully.${NC}"
+                fi
+                break
+                ;;
+            
+            "drop database")
+                read -p "$(echo -e "${BLUE}Please enter the database name you want to drop: ${NC}")" DBName
+
+                DBNameLower="${DBName,,}"
+                validate_db_name "$DBNameLower"
+                
+                # Check if the function returned an error (non-zero status)
+                if [ $? -eq 0 ]; then
+                    if [ -d ~/db/$DBNameLower ]; then
+                        rm -r ~/db/$DBNameLower
+                        echo -e "${GREEN}Database '$DBNameLower' is dropped successfully${NC}"
+                    else
+                        echo -e "${RED}Database '$DBName' doesn't exist${NC}"
+                    fi
+                else
+                    echo -e "${RED}Failed to drop database due to validation errors.${NC}"
+                fi
+                break
+                ;;
+            
+            "connect to databases")
+                read -p "$(echo -e "${BLUE}Please enter the database name you want to connect to: ${NC}")" DBName
+
+                DBNameLower="${DBName,,}"
+                validate_db_name "$DBNameLower"
+                
+                # Check if the function returned an error (non-zero status)
+                if [ $? -eq 0 ]; then
+                    if [ -d ~/db/$DBNameLower ]; then
+                        cd ~/db/$DBNameLower
+                        echo -e "${GREEN}Connected successfully to the database '$DBNameLower'${NC}"
+                        export DBNameLower
+                        table_operations
+                        
+                    else
+                        echo -e "${RED}Database '$DBName' doesn't exist${NC}"
+                    fi
+                fi
+                break
+                ;;
+            
+            "exit")
+                echo -e "${GREEN}Exiting Database Management System ${NC}"
+                break 2  # Exit from the outer loop as well
+                ;;
+            
+            *)
+                echo -e "${RED}Invalid option. Please select a valid option.${NC}"
+                break  # Restart the select loop for the user to choose again
+                ;;
+        esac
+    done
+done
